@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ShareVolume App</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f4f4f4;
+            color: #333;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background-color: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+        h1 {
+            color: #0056b3;
+            text-align: center;
+            margin-bottom: 30px;
+        }
+        .data-section {
+            display: flex;
+            justify-content: space-around;
+            margin-top: 20px;
+            flex-wrap: wrap;
+        }
+        .card {
+            background-color: #e9f7ff;
+            border: 1px solid #cceeff;
+            border-radius: 5px;
+            padding: 15px;
+            margin: 10px;
+            flex: 1;
+            min-width: 280px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+        }
+        .card h2 {
+            color: #0056b3;
+            margin-top: 0;
+            font-size: 1.2em;
+        }
+        .card p {
+            margin: 5px 0;
+            font-size: 1.1em;
+        }
+        .card .label {
+            font-weight: bold;
+            color: #555;
+        }
+        #share-entity-name {
+            font-size: 1.5em;
+            margin-bottom: 10px;
+            display: block;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1 id="share-entity-name">Loading Company Shares Data...</h1>
+
+        <div class="data-section">
+            <div class="card">
+                <h2>Maximum Shares Outstanding</h2>
+                <p><span class="label">Value:</span> <span id="share-max-value">--</span></p>
+                <p><span class="label">Fiscal Year:</span> <span id="share-max-fy">--</span></p>
+            </div>
+
+            <div class="card">
+                <h2>Minimum Shares Outstanding</h2>
+                <p><span class="label">Value:</span> <span id="share-min-value">--</span></p>
+                <p><span class="label">Fiscal Year:</span> <span id="share-min-fy">--</span></p>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const defaultCik = '0001037540'; // BXP, Inc.
+            const urlParams = new URLSearchParams(window.location.search);
+            const cik = urlParams.get('CIK') || defaultCik;
+
+            // Helper function to update text content of an element by ID
+            const updateElementText = (id, text) => {
+                const element = document.getElementById(id);
+                if (element) {
+                    element.textContent = text;
+                }
+            };
+
+            const formatNumber = (num) => {
+                return new Intl.NumberFormat('en-US').format(num);
+            };
+
+            const fetchAndRenderData = async (targetCik) => {
+                updateElementText('share-entity-name', 'Loading Company Shares Data...');
+                updateElementText('share-max-value', '--');
+                updateElementText('share-max-fy', '--');
+                updateElementText('share-min-value', '--');
+                updateElementText('share-min-fy', '--');
+
+                let secApiUrl = `https://data.sec.gov/api/xbrl/companyconcept/CIK${targetCik}/dei/EntityCommonStockSharesOutstanding.json`;
+                let fetchOptions = {
+                    headers: {
+                        'User-Agent': 'ShareVolumeApp/1.0 (contact@example.com)' // Descriptive User-Agent per SEC guidance
+                    }
+                };
+
+                let response;
+                try {
+                    // Use a proxy only if the CIK is different from the default, as specified in the prompt.
+                    // The prompt allows "any proxy, e.g. AIPipe". Using allorigins.win for reliability and public access.
+                    if (targetCik !== defaultCik) {
+                        secApiUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(secApiUrl)}`;
+                        // When using a proxy, the proxy might handle or strip the User-Agent header.
+                        // We keep it in fetchOptions for direct calls, but it might not be forwarded by the proxy.
+                    }
+
+                    response = await fetch(secApiUrl, fetchOptions);
+
+                    if (!response.ok) {
+                        throw new Error(`HTTP error! Status: ${response.status}`);
+                    }
+
+                    const data = await response.json();
+
+                    const entityName = data.entityName;
+                    const sharesData = data.units.shares;
+
+                    const filteredShares = sharesData
+                        .filter(entry => parseInt(entry.fy) > 2020 && typeof entry.val === 'number')
+                        .sort((a, b) => parseInt(a.fy) - parseInt(b.fy)); // Sort by fy to help with consistent tie-breaking if multiple max/min exist in same year
+
+                    if (filteredShares.length === 0) {
+                        updateElementText('share-entity-name', `${entityName} (No shares data for FY > 2020 found)`);
+                        return;
+                    }
+
+                    let maxValEntry = filteredShares[0];
+                    let minValEntry = filteredShares[0];
+
+                    for (const entry of filteredShares) {
+                        if (entry.val > maxValEntry.val) {
+                            maxValEntry = entry;
+                        }
+                        if (entry.val < minValEntry.val) {
+                            minValEntry = entry;
+                        }
+                    }
+
+                    // Update HTML elements
+                    document.title = `ShareVolume App - ${entityName}`;
+                    updateElementText('share-entity-name', entityName);
+                    updateElementText('share-max-value', formatNumber(maxValEntry.val));
+                    updateElementText('share-max-fy', maxValEntry.fy);
+                    updateElementText('share-min-value', formatNumber(minValEntry.val));
+                    updateElementText('share-min-fy', minValEntry.fy);
+
+                } catch (error) {
+                    console.error('Failed to fetch and render data:', error);
+                    updateElementText('share-entity-name', `Error loading data for CIK ${targetCik}. Please try again or check the CIK.`);
+                    document.title = 'ShareVolume App - Error';
+                }
+            };
+
+            fetchAndRenderData(cik);
+        });
+    </script>
+</body>
+</html>
